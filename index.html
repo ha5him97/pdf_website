@@ -7,6 +7,12 @@
     <link rel="stylesheet" href="styles.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 </head>
 <body>
     <header class="header">
@@ -135,6 +141,27 @@
         </div>
     </div>
 
+    <!-- Firebase Configuration -->
+    <script>
+        // Your Firebase configuration
+        const firebaseConfig = {
+            apiKey: "your-api-key-here",
+            authDomain: "your-project.firebaseapp.com",
+            projectId: "your-project-id",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "your-sender-id",
+            appId: "your-app-id"
+        };
+        
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        
+        // Initialize services
+        const db = firebase.firestore();
+        const storage = firebase.storage();
+        const auth = firebase.auth();
+    </script>
+    
     <script src="script.js"></script>
 </body>
 </html>

@@ -1,19 +1,36 @@
-// PDF Library Application
+// PDF Library Application with Firebase Cloud Storage
 class PDFLibrary {
     constructor() {
-        this.pdfs = JSON.parse(localStorage.getItem('pdfLibrary')) || [];
+        this.pdfs = [];
         this.currentFilter = 'all';
         this.searchTerm = '';
         this.selectedFile = null;
         this.currentPreviewId = null;
+        this.userId = null;
         
         this.init();
     }
     
-    init() {
+    async init() {
+        await this.initializeAuth();
         this.bindEvents();
+        await this.loadPDFs();
         this.renderPDFs();
         this.updatePDFCount();
+    }
+    
+    async initializeAuth() {
+        try {
+            // Sign in anonymously for cloud storage
+            const userCredential = await auth.signInAnonymously();
+            this.userId = userCredential.user.uid;
+            console.log('Signed in anonymously:', this.userId);
+        } catch (error) {
+            console.error('Authentication error:', error);
+            this.showMessage('Failed to connect to cloud storage. Using local storage instead.', 'error');
+            // Fallback to localStorage
+            this.useLocalStorage = true;
+        }
     }
     
     bindEvents() {
@@ -92,6 +109,85 @@ class PDFLibrary {
         });
     }
     
+    async loadPDFs() {
+        if (this.useLocalStorage) {
+            // Fallback to localStorage
+            this.pdfs = JSON.parse(localStorage.getItem('pdfLibrary')) || [];
+            return;
+        }
+        
+        try {
+            const snapshot = await db.collection('pdfs').where('userId', '==', this.userId).get();
+            this.pdfs = [];
+            
+            for (const doc of snapshot.docs) {
+                const pdfData = doc.data();
+                // Get download URL from storage
+                try {
+                    const storageRef = storage.ref(`pdfs/${this.userId}/${pdfData.fileName}`);
+                    pdfData.url = await storageRef.getDownloadURL();
+                } catch (error) {
+                    console.error('Error getting download URL:', error);
+                    continue; // Skip this PDF if we can't get the URL
+                }
+                
+                this.pdfs.push({
+                    id: doc.id,
+                    ...pdfData
+                });
+            }
+            
+            // Sort by upload date (newest first)
+            this.pdfs.sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
+            
+        } catch (error) {
+            console.error('Error loading PDFs:', error);
+            this.showMessage('Failed to load PDFs from cloud storage.', 'error');
+            // Fallback to localStorage
+            this.pdfs = JSON.parse(localStorage.getItem('pdfLibrary')) || [];
+        }
+    }
+    
+    async savePDFToCloud(pdfData) {
+        try {
+            // Upload file to Firebase Storage
+            const storageRef = storage.ref(`pdfs/${this.userId}/${pdfData.fileName}`);
+            const uploadTask = await storageRef.put(this.selectedFile);
+            
+            // Save metadata to Firestore
+            const docRef = await db.collection('pdfs').add({
+                ...pdfData,
+                userId: this.userId,
+                storagePath: `pdfs/${this.userId}/${pdfData.fileName}`
+            });
+            
+            return docRef.id;
+        } catch (error) {
+            console.error('Error saving to cloud:', error);
+            throw error;
+        }
+    }
+    
+    async deletePDFFromCloud(pdfId) {
+        try {
+            const pdf = this.pdfs.find(p => p.id === pdfId);
+            if (!pdf) return;
+            
+            // Delete from Firestore
+            await db.collection('pdfs').doc(pdfId).delete();
+            
+            // Delete from Storage
+            if (pdf.storagePath) {
+                const storageRef = storage.ref(pdf.storagePath);
+                await storageRef.delete();
+            }
+            
+        } catch (error) {
+            console.error('Error deleting from cloud:', error);
+            throw error;
+        }
+    }
+    
     openUploadModal() {
         document.getElementById('uploadModal').classList.add('show');
         document.body.style.overflow = 'hidden';
@@ -154,7 +250,7 @@ class PDFLibrary {
         confirmBtn.disabled = !(title && hasFile);
     }
     
-    uploadPDF() {
+    async uploadPDF() {
         if (!this.selectedFile) {
             this.showMessage('Please select a PDF file.', 'error');
             return;
@@ -169,29 +265,59 @@ class PDFLibrary {
             return;
         }
         
-        // Create PDF object
-        const pdf = {
-            id: Date.now().toString(),
-            title: title,
-            category: category,
-            description: description,
-            fileName: this.selectedFile.name,
-            fileSize: this.selectedFile.size,
-            uploadDate: new Date().toISOString(),
-            url: URL.createObjectURL(this.selectedFile)
-        };
+        // Show loading state
+        const confirmBtn = document.getElementById('confirmUpload');
+        const originalText = confirmBtn.innerHTML;
+        confirmBtn.innerHTML = '<span class="spinner"></span> Uploading...';
+        confirmBtn.disabled = true;
         
-        // Add to library
-        this.pdfs.unshift(pdf);
-        this.saveToStorage();
-        this.renderPDFs();
-        this.updatePDFCount();
-        this.closeUploadModal();
-        
-        this.showMessage('PDF uploaded successfully!', 'success');
+        try {
+            // Create PDF object
+            const pdfData = {
+                title: title,
+                category: category,
+                description: description,
+                fileName: this.selectedFile.name,
+                fileSize: this.selectedFile.size,
+                uploadDate: new Date().toISOString()
+            };
+            
+            if (this.useLocalStorage) {
+                // Fallback to localStorage
+                const pdf = {
+                    id: Date.now().toString(),
+                    ...pdfData,
+                    url: URL.createObjectURL(this.selectedFile)
+                };
+                this.pdfs.unshift(pdf);
+                localStorage.setItem('pdfLibrary', JSON.stringify(this.pdfs));
+            } else {
+                // Upload to cloud
+                const pdfId = await this.savePDFToCloud(pdfData);
+                const pdf = {
+                    id: pdfId,
+                    ...pdfData,
+                    url: await storage.ref(`pdfs/${this.userId}/${pdfData.fileName}`).getDownloadURL()
+                };
+                this.pdfs.unshift(pdf);
+            }
+            
+            this.renderPDFs();
+            this.updatePDFCount();
+            this.closeUploadModal();
+            this.showMessage('PDF uploaded successfully to cloud storage!', 'success');
+            
+        } catch (error) {
+            console.error('Upload error:', error);
+            this.showMessage('Failed to upload PDF. Please try again.', 'error');
+        } finally {
+            // Reset button
+            confirmBtn.innerHTML = originalText;
+            confirmBtn.disabled = false;
+        }
     }
     
-    downloadPDF() {
+    async downloadPDF() {
         if (this.currentPreviewId) {
             const pdf = this.pdfs.find(p => p.id === this.currentPreviewId);
             if (pdf) {
@@ -203,19 +329,32 @@ class PDFLibrary {
         }
     }
     
-    deletePDF() {
+    async deletePDF() {
         if (this.currentPreviewId) {
             if (confirm('Are you sure you want to delete this PDF?')) {
-                const index = this.pdfs.findIndex(p => p.id === this.currentPreviewId);
-                if (index !== -1) {
-                    // Revoke object URL to free memory
-                    URL.revokeObjectURL(this.pdfs[index].url);
-                    this.pdfs.splice(index, 1);
-                    this.saveToStorage();
+                try {
+                    if (this.useLocalStorage) {
+                        // Fallback to localStorage
+                        const index = this.pdfs.findIndex(p => p.id === this.currentPreviewId);
+                        if (index !== -1) {
+                            URL.revokeObjectURL(this.pdfs[index].url);
+                            this.pdfs.splice(index, 1);
+                            localStorage.setItem('pdfLibrary', JSON.stringify(this.pdfs));
+                        }
+                    } else {
+                        // Delete from cloud
+                        await this.deletePDFFromCloud(this.currentPreviewId);
+                        this.pdfs = this.pdfs.filter(p => p.id !== this.currentPreviewId);
+                    }
+                    
                     this.renderPDFs();
                     this.updatePDFCount();
                     this.closePreviewModal();
                     this.showMessage('PDF deleted successfully!', 'success');
+                    
+                } catch (error) {
+                    console.error('Delete error:', error);
+                    this.showMessage('Failed to delete PDF. Please try again.', 'error');
                 }
             }
         }
@@ -334,10 +473,6 @@ class PDFLibrary {
         });
     }
     
-    saveToStorage() {
-        localStorage.setItem('pdfLibrary', JSON.stringify(this.pdfs));
-    }
-    
     showMessage(message, type) {
         // Remove existing messages
         const existingMessages = document.querySelectorAll('.success-message, .error-message');
@@ -364,48 +499,4 @@ class PDFLibrary {
 // Initialize the application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     new PDFLibrary();
-});
-
-// Add some sample data for demonstration
-document.addEventListener('DOMContentLoaded', () => {
-    // Check if this is the first visit
-    const isFirstVisit = !localStorage.getItem('pdfLibrary');
-    
-    if (isFirstVisit) {
-        // Add some sample PDFs for demonstration
-        const samplePDFs = [
-            {
-                id: 'sample1',
-                title: 'Introduction to Machine Learning',
-                category: 'academic',
-                description: 'A comprehensive guide to machine learning fundamentals and algorithms.',
-                fileName: 'ml-intro.pdf',
-                fileSize: 2048576, // 2MB
-                uploadDate: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
-                url: 'data:application/pdf;base64,JVBERi0xLjQKJcOkw7zDtsO8CjIgMCBvYmoKPDwKL0xlbmd0aCAzIDAgUgovRmlsdGVyIC9GbGF0ZURlY29kZQo+PgpzdHJlYW0K' // Sample PDF data
-            },
-            {
-                id: 'sample2',
-                title: 'Research Methods in Psychology',
-                category: 'research',
-                description: 'Essential research methodologies and statistical analysis techniques.',
-                fileName: 'psych-research.pdf',
-                fileSize: 1536000, // 1.5MB
-                uploadDate: new Date(Date.now() - 172800000).toISOString(), // 2 days ago
-                url: 'data:application/pdf;base64,JVBERi0xLjQKJcOkw7zDtsO8CjIgMCBvYmoKPDwKL0xlbmd0aCAzIDAgUgovRmlsdGVyIC9GbGF0ZURlY29kZQo+PgpzdHJlYW0K'
-            },
-            {
-                id: 'sample3',
-                title: 'Lecture Notes - Calculus',
-                category: 'notes',
-                description: 'My personal notes from calculus lectures covering derivatives and integrals.',
-                fileName: 'calc-notes.pdf',
-                fileSize: 1024000, // 1MB
-                uploadDate: new Date(Date.now() - 259200000).toISOString(), // 3 days ago
-                url: 'data:application/pdf;base64,JVBERi0xLjQKJcOkw7zDtsO8CjIgMCBvYmoKPDwKL0xlbmd0aCAzIDAgUgovRmlsdGVyIC9GbGF0ZURlY29kZQo+PgpzdHJlYW0K'
-            }
-        ];
-        
-        localStorage.setItem('pdfLibrary', JSON.stringify(samplePDFs));
-    }
 });
