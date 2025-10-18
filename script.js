@@ -177,8 +177,10 @@ class PDFLibrary {
                     fileName: file.name,
                     fileSize: parseInt(file.size) || 0,
                     uploadDate: file.createdTime,
-                    url: file.webViewLink,
-                    downloadUrl: file.webContentLink
+                    // Use Drive's embeddable preview URL for iframes
+                    url: `https://drive.google.com/file/d/${file.id}/preview`,
+                    // Use Drive v3 media endpoint for authenticated downloads
+                    downloadUrl: `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`
                 });
             }
             
@@ -275,8 +277,8 @@ class PDFLibrary {
                 fileName: file.name,
                 fileSize: parseInt(file.size) || 0,
                 uploadDate: file.createdTime,
-                url: file.webViewLink,
-                downloadUrl: file.webContentLink
+                url: `https://drive.google.com/file/d/${file.id}/preview`,
+                downloadUrl: `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`
             };
             
             this.pdfs.unshift(pdf);
