@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StudyPDF Library</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-book-open"></i>
+                    <h1>StudyPDF Library</h1>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-primary" id="uploadBtn">
+                        <i class="fas fa-plus"></i>
+                        Upload PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main">
+        <div class="container">
+            <!-- Search and Filter Section -->
+            <section class="search-section">
+                <div class="search-bar">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchInput" placeholder="Search your PDFs...">
+                </div>
+                <div class="filter-tabs">
+                    <button class="filter-tab active" data-category="all">All</button>
+                    <button class="filter-tab" data-category="academic">Academic</button>
+                    <button class="filter-tab" data-category="research">Research</button>
+                    <button class="filter-tab" data-category="notes">Notes</button>
+                    <button class="filter-tab" data-category="books">Books</button>
+                </div>
+            </section>
+
+            <!-- PDF Grid -->
+            <section class="pdf-grid-section">
+                <div class="section-header">
+                    <h2>Your PDF Collection</h2>
+                    <span class="pdf-count" id="pdfCount">0 PDFs</span>
+                </div>
+                <div class="pdf-grid" id="pdfGrid">
+                    <!-- PDF cards will be dynamically inserted here -->
+                </div>
+                <div class="empty-state" id="emptyState">
+                    <i class="fas fa-book"></i>
+                    <h3>No PDFs yet</h3>
+                    <p>Upload your first PDF to get started with your study library!</p>
+                    <button class="btn btn-primary" id="emptyUploadBtn">
+                        <i class="fas fa-upload"></i>
+                        Upload PDF
+                    </button>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Upload Modal -->
+    <div class="modal" id="uploadModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Upload PDF</h3>
+                <button class="modal-close" id="closeModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="upload-area" id="uploadArea">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <h4>Drag & drop your PDF here</h4>
+                    <p>or click to browse files</p>
+                    <input type="file" id="fileInput" accept=".pdf" multiple>
+                </div>
+                <div class="upload-form">
+                    <div class="form-group">
+                        <label for="pdfTitle">Title</label>
+                        <input type="text" id="pdfTitle" placeholder="Enter PDF title">
+                    </div>
+                    <div class="form-group">
+                        <label for="pdfCategory">Category</label>
+                        <select id="pdfCategory">
+                            <option value="academic">Academic</option>
+                            <option value="research">Research</option>
+                            <option value="notes">Notes</option>
+                            <option value="books">Books</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="pdfDescription">Description (optional)</label>
+                        <textarea id="pdfDescription" placeholder="Add a description..."></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelUpload">Cancel</button>
+                <button class="btn btn-primary" id="confirmUpload" disabled>Upload</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Preview Modal -->
+    <div class="modal" id="previewModal">
+        <div class="modal-content preview-modal">
+            <div class="modal-header">
+                <h3 id="previewTitle">PDF Preview</h3>
+                <button class="modal-close" id="closePreviewModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="pdf-preview" id="pdfPreview">
+                    <iframe id="pdfFrame" src="" width="100%" height="500px"></iframe>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="downloadPdf">
+                    <i class="fas fa-download"></i>
+                    Download
+                </button>
+                <button class="btn btn-danger" id="deletePdf">
+                    <i class="fas fa-trash"></i>
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
