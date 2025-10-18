@@ -8,11 +8,9 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <!-- Google Drive API -->
+    <script src="https://apis.google.com/js/api.js"></script>
+    <script src="https://accounts.google.com/gsi/client"></script>
 </head>
 <body>
     <header class="header">
@@ -141,25 +139,41 @@
         </div>
     </div>
 
-    <!-- Firebase Configuration -->
+    <!-- Google Drive Configuration -->
     <script>
-        // Your Firebase configuration
-        const firebaseConfig = {
-            apiKey: "your-api-key-here",
-            authDomain: "your-project.firebaseapp.com",
-            projectId: "your-project-id",
-            storageBucket: "your-project.appspot.com",
-            messagingSenderId: "your-sender-id",
-            appId: "your-app-id"
-        };
+        // Google Drive API configuration
+        const GOOGLE_CLIENT_ID = 'your-client-id.apps.googleusercontent.com';
+        const GOOGLE_API_KEY = 'your-api-key';
+        const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
+        const SCOPES = 'https://www.googleapis.com/auth/drive.file';
         
-        // Initialize Firebase
-        firebase.initializeApp(firebaseConfig);
+        let gapi;
+        let gis;
+        let tokenClient;
         
-        // Initialize services
-        const db = firebase.firestore();
-        const storage = firebase.storage();
-        const auth = firebase.auth();
+        // Initialize Google APIs
+        function initializeGoogleAPIs() {
+            gapi = window.gapi;
+            gis = window.google.accounts.oauth2;
+            
+            gapi.load('client', initializeGapiClient);
+        }
+        
+        async function initializeGapiClient() {
+            await gapi.client.init({
+                apiKey: GOOGLE_API_KEY,
+                discoveryDocs: [DISCOVERY_DOC],
+            });
+            
+            tokenClient = gis.initTokenClient({
+                client_id: GOOGLE_CLIENT_ID,
+                scope: SCOPES,
+                callback: '', // defined later
+            });
+        }
+        
+        // Initialize when page loads
+        window.addEventListener('load', initializeGoogleAPIs);
     </script>
     
     <script src="script.js"></script>

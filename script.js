@@ -1,4 +1,4 @@
-// PDF Library Application with Firebase Cloud Storage
+// PDF Library Application with Google Drive Storage
 class PDFLibrary {
     constructor() {
         this.pdfs = [];
@@ -6,31 +6,17 @@ class PDFLibrary {
         this.searchTerm = '';
         this.selectedFile = null;
         this.currentPreviewId = null;
-        this.userId = null;
+        this.isAuthenticated = false;
+        this.driveFolderId = null;
         
         this.init();
     }
     
     async init() {
-        await this.initializeAuth();
         this.bindEvents();
         await this.loadPDFs();
         this.renderPDFs();
         this.updatePDFCount();
-    }
-    
-    async initializeAuth() {
-        try {
-            // Sign in anonymously for cloud storage
-            const userCredential = await auth.signInAnonymously();
-            this.userId = userCredential.user.uid;
-            console.log('Signed in anonymously:', this.userId);
-        } catch (error) {
-            console.error('Authentication error:', error);
-            this.showMessage('Failed to connect to cloud storage. Using local storage instead.', 'error');
-            // Fallback to localStorage
-            this.useLocalStorage = true;
-        }
     }
     
     bindEvents() {
@@ -109,82 +95,229 @@ class PDFLibrary {
         });
     }
     
-    async loadPDFs() {
-        if (this.useLocalStorage) {
-            // Fallback to localStorage
-            this.pdfs = JSON.parse(localStorage.getItem('pdfLibrary')) || [];
-            return;
-        }
-        
-        try {
-            const snapshot = await db.collection('pdfs').where('userId', '==', this.userId).get();
-            this.pdfs = [];
-            
-            for (const doc of snapshot.docs) {
-                const pdfData = doc.data();
-                // Get download URL from storage
-                try {
-                    const storageRef = storage.ref(`pdfs/${this.userId}/${pdfData.fileName}`);
-                    pdfData.url = await storageRef.getDownloadURL();
-                } catch (error) {
-                    console.error('Error getting download URL:', error);
-                    continue; // Skip this PDF if we can't get the URL
+    async authenticateWithGoogle() {
+        return new Promise((resolve, reject) => {
+            tokenClient.callback = async (resp) => {
+                if (resp.error !== undefined) {
+                    reject(resp);
+                    return;
                 }
                 
+                this.isAuthenticated = true;
+                await this.createPDFLibraryFolder();
+                resolve(resp);
+            };
+            
+            if (gapi.client.getToken() === null) {
+                tokenClient.requestAccessToken({ prompt: 'consent' });
+            } else {
+                tokenClient.requestAccessToken({ prompt: '' });
+            }
+        });
+    }
+    
+    async createPDFLibraryFolder() {
+        try {
+            // Check if folder already exists
+            const response = await gapi.client.drive.files.list({
+                q: "name='PDF Library' and mimeType='application/vnd.google-apps.folder' and trashed=false",
+                fields: 'files(id, name)'
+            });
+            
+            if (response.result.files.length > 0) {
+                this.driveFolderId = response.result.files[0].id;
+            } else {
+                // Create new folder
+                const folderMetadata = {
+                    name: 'PDF Library',
+                    mimeType: 'application/vnd.google-apps.folder'
+                };
+                
+                const folder = await gapi.client.drive.files.create({
+                    resource: folderMetadata,
+                    fields: 'id'
+                });
+                
+                this.driveFolderId = folder.result.id;
+            }
+        } catch (error) {
+            console.error('Error creating folder:', error);
+        }
+    }
+    
+    async loadPDFs() {
+        try {
+            // Try to authenticate first
+            if (!this.isAuthenticated) {
+                await this.authenticateWithGoogle();
+            }
+            
+            if (!this.driveFolderId) {
+                await this.createPDFLibraryFolder();
+            }
+            
+            // Load PDFs from Google Drive
+            const response = await gapi.client.drive.files.list({
+                q: `'${this.driveFolderId}' in parents and mimeType='application/pdf' and trashed=false`,
+                fields: 'files(id, name, size, createdTime, webViewLink, webContentLink)',
+                orderBy: 'createdTime desc'
+            });
+            
+            this.pdfs = [];
+            
+            for (const file of response.result.files) {
+                // Get metadata from file name or description
+                const metadata = this.parseFileName(file.name);
+                
                 this.pdfs.push({
-                    id: doc.id,
-                    ...pdfData
+                    id: file.id,
+                    title: metadata.title,
+                    category: metadata.category,
+                    description: metadata.description,
+                    fileName: file.name,
+                    fileSize: parseInt(file.size) || 0,
+                    uploadDate: file.createdTime,
+                    url: file.webViewLink,
+                    downloadUrl: file.webContentLink
                 });
             }
             
-            // Sort by upload date (newest first)
-            this.pdfs.sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
-            
         } catch (error) {
             console.error('Error loading PDFs:', error);
-            this.showMessage('Failed to load PDFs from cloud storage.', 'error');
+            this.showMessage('Failed to load PDFs from Google Drive. Please sign in.', 'error');
             // Fallback to localStorage
             this.pdfs = JSON.parse(localStorage.getItem('pdfLibrary')) || [];
         }
     }
     
-    async savePDFToCloud(pdfData) {
+    parseFileName(fileName) {
+        // Parse filename format: "Title - Category - Description.pdf"
+        const parts = fileName.replace('.pdf', '').split(' - ');
+        
+        return {
+            title: parts[0] || fileName.replace('.pdf', ''),
+            category: parts[1] || 'academic',
+            description: parts[2] || ''
+        };
+    }
+    
+    formatFileName(title, category, description) {
+        return `${title} - ${category}${description ? ' - ' + description : ''}.pdf`;
+    }
+    
+    async uploadPDF() {
+        if (!this.selectedFile) {
+            this.showMessage('Please select a PDF file.', 'error');
+            return;
+        }
+        
+        const title = document.getElementById('pdfTitle').value.trim();
+        const category = document.getElementById('pdfCategory').value;
+        const description = document.getElementById('pdfDescription').value.trim();
+        
+        if (!title) {
+            this.showMessage('Please enter a title.', 'error');
+            return;
+        }
+        
+        // Show loading state
+        const confirmBtn = document.getElementById('confirmUpload');
+        const originalText = confirmBtn.innerHTML;
+        confirmBtn.innerHTML = '<span class="spinner"></span> Uploading...';
+        confirmBtn.disabled = true;
+        
         try {
-            // Upload file to Firebase Storage
-            const storageRef = storage.ref(`pdfs/${this.userId}/${pdfData.fileName}`);
-            const uploadTask = await storageRef.put(this.selectedFile);
+            // Authenticate if needed
+            if (!this.isAuthenticated) {
+                await this.authenticateWithGoogle();
+            }
             
-            // Save metadata to Firestore
-            const docRef = await db.collection('pdfs').add({
-                ...pdfData,
-                userId: this.userId,
-                storagePath: `pdfs/${this.userId}/${pdfData.fileName}`
+            if (!this.driveFolderId) {
+                await this.createPDFLibraryFolder();
+            }
+            
+            // Create file metadata
+            const fileName = this.formatFileName(title, category, description);
+            const metadata = {
+                name: fileName,
+                parents: [this.driveFolderId]
+            };
+            
+            // Upload file to Google Drive
+            const form = new FormData();
+            form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+            form.append('file', this.selectedFile);
+            
+            const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + gapi.client.getToken().access_token
+                },
+                body: form
             });
             
-            return docRef.id;
+            const result = await response.json();
+            
+            // Get file details
+            const fileResponse = await gapi.client.drive.files.get({
+                fileId: result.id,
+                fields: 'id, name, size, createdTime, webViewLink, webContentLink'
+            });
+            
+            const file = fileResponse.result;
+            
+            // Add to local list
+            const pdf = {
+                id: file.id,
+                title: title,
+                category: category,
+                description: description,
+                fileName: file.name,
+                fileSize: parseInt(file.size) || 0,
+                uploadDate: file.createdTime,
+                url: file.webViewLink,
+                downloadUrl: file.webContentLink
+            };
+            
+            this.pdfs.unshift(pdf);
+            this.renderPDFs();
+            this.updatePDFCount();
+            this.closeUploadModal();
+            this.showMessage('PDF uploaded successfully to Google Drive!', 'success');
+            
         } catch (error) {
-            console.error('Error saving to cloud:', error);
-            throw error;
+            console.error('Upload error:', error);
+            this.showMessage('Failed to upload PDF. Please try again.', 'error');
+        } finally {
+            // Reset button
+            confirmBtn.innerHTML = originalText;
+            confirmBtn.disabled = false;
         }
     }
     
-    async deletePDFFromCloud(pdfId) {
-        try {
-            const pdf = this.pdfs.find(p => p.id === pdfId);
-            if (!pdf) return;
-            
-            // Delete from Firestore
-            await db.collection('pdfs').doc(pdfId).delete();
-            
-            // Delete from Storage
-            if (pdf.storagePath) {
-                const storageRef = storage.ref(pdf.storagePath);
-                await storageRef.delete();
+    async deletePDF() {
+        if (this.currentPreviewId) {
+            if (confirm('Are you sure you want to delete this PDF?')) {
+                try {
+                    if (this.isAuthenticated) {
+                        // Delete from Google Drive
+                        await gapi.client.drive.files.delete({
+                            fileId: this.currentPreviewId
+                        });
+                    }
+                    
+                    // Remove from local list
+                    this.pdfs = this.pdfs.filter(p => p.id !== this.currentPreviewId);
+                    this.renderPDFs();
+                    this.updatePDFCount();
+                    this.closePreviewModal();
+                    this.showMessage('PDF deleted successfully!', 'success');
+                    
+                } catch (error) {
+                    console.error('Delete error:', error);
+                    this.showMessage('Failed to delete PDF. Please try again.', 'error');
+                }
             }
-            
-        } catch (error) {
-            console.error('Error deleting from cloud:', error);
-            throw error;
         }
     }
     
@@ -250,112 +383,14 @@ class PDFLibrary {
         confirmBtn.disabled = !(title && hasFile);
     }
     
-    async uploadPDF() {
-        if (!this.selectedFile) {
-            this.showMessage('Please select a PDF file.', 'error');
-            return;
-        }
-        
-        const title = document.getElementById('pdfTitle').value.trim();
-        const category = document.getElementById('pdfCategory').value;
-        const description = document.getElementById('pdfDescription').value.trim();
-        
-        if (!title) {
-            this.showMessage('Please enter a title.', 'error');
-            return;
-        }
-        
-        // Show loading state
-        const confirmBtn = document.getElementById('confirmUpload');
-        const originalText = confirmBtn.innerHTML;
-        confirmBtn.innerHTML = '<span class="spinner"></span> Uploading...';
-        confirmBtn.disabled = true;
-        
-        try {
-            // Create PDF object
-            const pdfData = {
-                title: title,
-                category: category,
-                description: description,
-                fileName: this.selectedFile.name,
-                fileSize: this.selectedFile.size,
-                uploadDate: new Date().toISOString()
-            };
-            
-            if (this.useLocalStorage) {
-                // Fallback to localStorage
-                const pdf = {
-                    id: Date.now().toString(),
-                    ...pdfData,
-                    url: URL.createObjectURL(this.selectedFile)
-                };
-                this.pdfs.unshift(pdf);
-                localStorage.setItem('pdfLibrary', JSON.stringify(this.pdfs));
-            } else {
-                // Upload to cloud
-                const pdfId = await this.savePDFToCloud(pdfData);
-                const pdf = {
-                    id: pdfId,
-                    ...pdfData,
-                    url: await storage.ref(`pdfs/${this.userId}/${pdfData.fileName}`).getDownloadURL()
-                };
-                this.pdfs.unshift(pdf);
-            }
-            
-            this.renderPDFs();
-            this.updatePDFCount();
-            this.closeUploadModal();
-            this.showMessage('PDF uploaded successfully to cloud storage!', 'success');
-            
-        } catch (error) {
-            console.error('Upload error:', error);
-            this.showMessage('Failed to upload PDF. Please try again.', 'error');
-        } finally {
-            // Reset button
-            confirmBtn.innerHTML = originalText;
-            confirmBtn.disabled = false;
-        }
-    }
-    
     async downloadPDF() {
         if (this.currentPreviewId) {
             const pdf = this.pdfs.find(p => p.id === this.currentPreviewId);
             if (pdf) {
                 const link = document.createElement('a');
-                link.href = pdf.url;
+                link.href = pdf.downloadUrl;
                 link.download = pdf.fileName;
                 link.click();
-            }
-        }
-    }
-    
-    async deletePDF() {
-        if (this.currentPreviewId) {
-            if (confirm('Are you sure you want to delete this PDF?')) {
-                try {
-                    if (this.useLocalStorage) {
-                        // Fallback to localStorage
-                        const index = this.pdfs.findIndex(p => p.id === this.currentPreviewId);
-                        if (index !== -1) {
-                            URL.revokeObjectURL(this.pdfs[index].url);
-                            this.pdfs.splice(index, 1);
-                            localStorage.setItem('pdfLibrary', JSON.stringify(this.pdfs));
-                        }
-                    } else {
-                        // Delete from cloud
-                        await this.deletePDFFromCloud(this.currentPreviewId);
-                        this.pdfs = this.pdfs.filter(p => p.id !== this.currentPreviewId);
-                    }
-                    
-                    this.renderPDFs();
-                    this.updatePDFCount();
-                    this.closePreviewModal();
-                    this.showMessage('PDF deleted successfully!', 'success');
-                    
-                } catch (error) {
-                    console.error('Delete error:', error);
-                    this.showMessage('Failed to delete PDF. Please try again.', 'error');
-                }
             }
         }
     }
